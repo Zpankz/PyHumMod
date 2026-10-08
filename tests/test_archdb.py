@@ -98,11 +98,55 @@ class ArchDBTest(unittest.TestCase):
         mid = db.eval_curve("ADHSecretion.NeuralEffect_curve", 1.1)
         self.assertTrue(1.0 < mid < 2.0)
 
-    def test_known_conversion_defects_are_reported(self):
+    def test_source_has_no_conversion_defects(self):
+        # Only blocks step() never reaches remain, each with the reason it is unscheduled.
         kinds = {r["kind"] for r in self.db.sql("SELECT DISTINCT kind FROM issues")}
-        self.assertIn("duplicate_class", kinds)
-        undeclared = {r["subject"] for r in self.db.issues("undeclared_variable")}
-        self.assertIn("ADHPool.InitialConc", undeclared)
+        self.assertEqual(kinds, {"unscheduled_block"})
+        reasons = {r["detail"] for r in self.db.issues("unscheduled_block")}
+        self.assertIn("not reachable from step() (event handler)", reasons)
+
+    def test_conversion_defects_are_reported(self):
+        source = """
+class System:
+    def __init__(self):
+        self.Dx = 0.1
+
+class Timer:
+    def __init__(self, val, state, Dx):
+        self.val = val
+
+class Pool:
+    def __init__(self):
+        self.Mass = 1.0
+
+class Pool:
+    def __init__(self):
+        self.Mass = 1.0
+        self.Timer = Timer(0.0, "OFF", System.Dx)
+
+    def Dervs_func(self):
+        self.Mass = self.InitialConc * self.float("inf")
+        if Timer < self.Mass:
+            Other.Missing_func()
+
+System = System()
+Pool = Pool()
+
+def step():
+    Pool.Dervs_func()
+"""
+        with tempfile.TemporaryDirectory() as tmp:
+            src = os.path.join(tmp, "model.py")
+            with open(src, "w") as f:
+                f.write(source)
+            extractor = extract.Extractor(src)
+            extractor.run()
+        found = {(kind, subject) for kind, subject, _detail, _line in extractor.issues}
+        self.assertIn(("duplicate_class", "Pool"), found)
+        self.assertIn(("undeclared_variable", "Pool.InitialConc"), found)
+        self.assertIn(("missing_method", "self.float"), found)
+        self.assertIn(("class_as_value", "Timer"), found)
+        self.assertIn(("missing_block", "Other.Missing_func"), found)
 
     def test_timestep_is_an_input_of_integration(self):
         down = {r["variable"] for r in self.db.outputs("System.Dx")}

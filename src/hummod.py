@@ -1,5 +1,6 @@
 from .special_functions import *
 import math
+import random
 
 timervars = []
 
@@ -451,7 +452,7 @@ class ADHPool:
         self.Mass = self.InitialMass
 
     def Initialize_func(self):
-        self.Mass = self.InitialConc * ECFV.Vol_L
+        self.Mass = self.Targetconc_ADH * ECFV.Vol_L
 
     def CalcConc_func(self):
         self.conc_ADH = self.Mass / ECFV.Vol_L
@@ -3489,12 +3490,12 @@ class SkeletalMuscle_MetabolicVasodilation:
         if self.OnTau > 0.0:
             self.OnK = ( 1 / self.OnTau )
         else:
-            self.OnK = self.float("inf")
+            self.OnK = float("inf")
 
         if self.OffTau > 0.0:
             self.OffK = ( 1 / self.OffTau )
         else:
-            self.OffK = self.float("inf")
+            self.OffK = float("inf")
 
 
     def Calc_func(self):
@@ -3826,7 +3827,7 @@ class DailyPlannerControl:
         self.HourTimer.state = "DOWN"
 
     def GetTask_func(self):
-        self.HoursIntoDay = self.ROUND ( ( System.X % 1440.0 ) / 60.0 )
+        self.HoursIntoDay = round( ( System.X % 1440.0 ) / 60.0 )
         if self.HoursIntoDay == 0:
             self.Task = DailyPlannerSchedule.Hour12AM_1AM
         elif self.HoursIntoDay == 1:
@@ -4104,7 +4105,7 @@ class Heart_Ventricles:
         self.Is_VentricularRhythm = False
         if Heart_Asystole.Is_Asystole or Heart_VFib.Is_Fibrillating:
             if CPR_Heart.Status == CPR_Heart.ACTIVE:
-                self.Rate = CPR_Heart.ThumperRate
+                self.Rate = CPR_Heart.ThumpRate
             else:
                 self.Rate = 0.0
 
@@ -4305,7 +4306,7 @@ class Heart_Defibrillator:
             else:
                 self.TotalShocks = self.TotalShocks + 1
                 self.Probability = LeftHeart_Function.Effect * self.Joules_Probability_curve( self.Joules )
-                if System.RANDOM < self.Probability:
+                if random.random() < self.Probability:
                     Heart_VFib.Stop_func()
                 else:
                     pass
@@ -4527,7 +4528,7 @@ class MidodrineDailyDose:
 
     def Wrapup_func(self):
         if self.TakeDaily:
-            if Timer < self.Interval:
+            if self.Timer < self.Interval:
                 pass
             else:
                 self.Timer.val = 0.0
@@ -4698,7 +4699,7 @@ class DigoxinDailyDose:
 
     def Wrapup_func(self):
         if self.TakeDaily:
-            if Timer < self.Interval:
+            if self.Timer < self.Interval:
                 pass
             else:
                 self.Timer.val = 0.0
@@ -4883,7 +4884,7 @@ class ThiazideDailyDose:
 
     def Wrapup_func(self):
         if self.TakeDaily:
-            if Timer < self.Interval:
+            if self.Timer < self.Interval:
                 pass
             else:
                 self.Timer.val = 0.0
@@ -12040,7 +12041,7 @@ class ANPPool:
         self.Mass = self.InitialMass
 
     def Initialize_func(self):
-        self.Mass = self.InitialConc * ECFV.Vol_L
+        self.Mass = self.Targetconc_ANP * ECFV.Vol_L
 
     def CalcConc_func(self):
         self.conc_ANP = self.Mass / ECFV.Vol_L
@@ -13161,7 +13162,7 @@ class Exercise_Metabolism:
         if self.Tau > 0.0:
             self.K = ( 1 / self.Tau )
         else:
-            self.K = self.float("inf")
+            self.K = float("inf")
 
         self.TotalWattsK = self.K
         self.MotionWattsK = self.K
@@ -13318,7 +13319,7 @@ class Pheochromocytoma:
 
     def Wrapup_func(self):
         if self.Switch:
-            if Timer < self.Period:
+            if self.Timer < self.Period:
                 pass
             else:
                 if self.InEpisode:
@@ -13331,14 +13332,14 @@ class Pheochromocytoma:
     def TurnOff_func(self):
         self.InEpisode = False
         self.FractSec = 0.0
-        self.Period = self.Noise * self.MAXPAUSE
+        self.Period = random.random() * self.MAXPAUSE
         self.Timer.val = 0.0
         self.Timer.state = "UP"
 
     def TurnOn_func(self):
         self.InEpisode = True
         self.FractSec = self.FRACTSEC
-        self.Period = self.Noise * self.MAXEPISODE
+        self.Period = random.random() * self.MAXEPISODE
         self.Timer.val = 0.0
         self.Timer.state = "UP"
 
@@ -14720,7 +14721,7 @@ class SplanchnicVeins:
         if self.Conductance > 0.0:
             self.DxMax = 0.5 * self.Compliance / self.Conductance
         else:
-            self.DxMax = self.INFINITY
+            self.DxMax = float("inf")
 
         self.Inflow = OrganFlow.HepaticVeinFlow
         self.Outflow = self.Conductance * ( self.Pressure - RightAtrium.Pressure )
@@ -14749,7 +14750,7 @@ class PulmVeins:
         if self.Conductance > 0.0:
             self.DxMax = 0.5 * self.Compliance / self.Conductance
         else:
-            self.DxMax = self.INFINITY
+            self.DxMax = float("inf")
 
         self.Inflow = PulmCapys.Outflow
         self.Outflow = self.Conductance * ( self.Pressure - LeftAtrium.Pressure )
@@ -14785,7 +14786,7 @@ class PulmArty:
         if self.Conductance > 0.0:
             self.DxMax = 0.5 * self.Compliance / self.Conductance
         else:
-            self.DxMax = self.INFINITY
+            self.DxMax = float("inf")
 
         self.Inflow = RightVentricle.Outflow
         self.Change = self.Inflow - self.Outflow
@@ -14907,7 +14908,7 @@ class SystemicArtys:
         if self.Conductance > 0.0:
             self.DxMax = 0.4 * self.Compliance / self.Conductance
         else:
-            self.DxMax = self.INFINITY
+            self.DxMax = float("inf")
 
         self.Inflow = LeftVentricle.Outflow
         self.Outflow = OrganFlow.HepaticVeinFlow + OrganFlow.PeripheralFlow
@@ -14948,7 +14949,7 @@ class PulmCapys:
         if self.Conductance > 0.0:
             self.DxMax = 0.5 * self.Compliance / self.Conductance
         else:
-            self.DxMax = self.INFINITY
+            self.DxMax = float("inf")
 
         self.Inflow = PulmArty.Outflow
         self.Change = self.Inflow - self.Outflow
@@ -15956,6 +15957,9 @@ class LH_Circulating:
 
         self.InitialMass = self.TargetConc * ECFV.InitialVol_L
         self.Mass = self.InitialMass
+
+    def Initialize_func(self):
+        self.Mass = self.TargetConc * ECFV.Vol_L
 
     def Conc_func(self):
         self.conc_Conc_IUperL = self.Mass / ECFV.Vol_L
@@ -17659,6 +17663,9 @@ class FSH_Circulating:
         self.InitialMass = self.TargetConc * ECFV.InitialVol_L
         self.Mass = self.InitialMass
 
+    def Initialize_func(self):
+        self.Mass = self.TargetConc * ECFV.Vol_L
+
     def Conc_func(self):
         self.conc_Conc_IUperL = self.Mass / ECFV.Vol_L
 
@@ -19179,11 +19186,6 @@ class TrainedAthlete:
         self.IsTrainedAthlete = True
         self.Value = "TRAINEDATHLETE"
     
-class Normal:
-    def __init__(self):
-        self.IsNormal = True
-        self.Value = "NORMAL"
-    
 class BelowNormal:
     def __init__(self):
         self.IsNormal = False
@@ -19274,359 +19276,6 @@ class VeryOld:
         self.IsVeryOld = True
         self.Value = "VERYOLD"
     
-class Start_OrganConductance:
-
-    def Calc_func(self):
-        Organs_ScaleConductance.Calc_func()
-
-class Start:
-
-    def Calc_func(self):
-        Start_Morphology.Calc_func()
-        Start_WholeBody.Calc_func()
-        Start_Heat.Calc_func()
-        Start_Electrolytes.Calc_func()
-        Start_Metabolism.Calc_func()
-        Start_Hormones.Calc_func()
-        Start_OrganCalories.Calc_func()
-        Start_OrganConductance.Calc_func()
-
-class Start_OrganCalories:
-
-    def Calc_func(self):
-        Organs_ScaleCals.Calc_func()
-
-class Start_Heat:
-
-    def Calc_func(self):
-        HeatCore.Initialize_func()
-        HeatSkin.Initialize_func()
-        HeatSkeletalMuscle.Initialize_func()
-
-class Start_Height:
-
-    def Calc_func(self):
-        Height.Initialize_func()
-
-class Start_Morphology:
-
-    def Calc_func(self):
-        Start_Age.Calc_func()
-        Start_Height.Calc_func()
-        Start_Gender.Calc_func()
-        Start_Weight.Calc_func()
-        Start_FatSize.Calc_func()
-        Start_SkeletalMuscleSize.Calc_func()
-
-class Start_FatSize:
-
-    def Calc_func(self):
-        Fat_Size.InitializeFatMass_func()
-
-class Start_Weight:
-
-    def Calc_func(self):
-        Weight.InitializeOtherMass_func()
-
-class Start_SkeletalMuscleSize:
-
-    def Calc_func(self):
-        SkeletalMuscle_Size.InitializeMuscleMass_func()
-
-class Start_Gender:
-
-    def Calc_func(self):
-        Gender.IsMale = Values_Gender.IsMale
-        Gender.IsFemale = Values_Gender.IsFemale
-        Gender.Value = Values_Gender.Value
-
-class Start_Age:
-
-    def Calc_func(self):
-        Age.Initialize_func()
-
-class Start_BloodSize:
-
-    def Calc_func(self):
-        BloodVol.Initialize_func()
-        PlasmaVol.Initialize_func()
-        RBCVol.Initialize_func()
-        RBCSolids.Initialize_func()
-        RBCH2O.Initialize_func()
-
-class Start_WholeBody:
-
-    def Calc_func(self):
-        Start_OrganSize.Calc_func()
-        Start_General.Calc_func()
-        Start_BloodSize.Calc_func()
-        Start_BodyH2O.Calc_func()
-        Start_BodySize.Calc_func()
-
-class Start_BodyH2O:
-
-    def Calc_func(self):
-        TissueH2O.Initialize_func()
-        ExternalH2O.Initialize_func()
-        BodyH2O.Initialize_func()
-        ECFV.Initialize_func()
-        ICFV.Initialize_func()
-        InterstitialWater.Initialize_func()
-        CellH2O.Initialize_func()
-        Organs_ScaleH2O.ScaleH2O_func()
-
-class Start_General:
-    def __init__(self):
-        self.X_Textbook = None
-        self.InitialLeanMass = None
-        self.InitialFatMass = None
-        self.LeanPart = None
-        self.LeanFraction = 0.0000182
-        self.FatPart = None
-        self.FatFraction = 0.0000060
-
-    def Calc_func(self):
-        self.InitialLeanMass = Bone_Size.InitialMass + Brain_Size.InitialMass + GITract_Size.InitialMass + Kidney_Size.InitialMass + LeftHeart_Size.InitialMass + Liver_Size.InitialMass + OtherTissue_Size.InitialMass + RespiratoryMuscle_Size.InitialMass + RightHeart_Size.InitialMass + SkeletalMuscle_Size.InitialMass + Skin_Size.InitialMass
-        self.InitialFatMass = Fat_Size.InitialMass
-        self.LeanPart = self.LeanFraction * self.InitialLeanMass
-        self.FatPart = self.FatFraction * self.InitialFatMass
-        self.X_Textbook = self.LeanPart + self.FatPart
-
-class Start_BodySize:
-
-    def Calc_func(self):
-        Weight.Initialize_func()
-        Height.Initialize_func()
-
-class Start_OrganSize:
-    def __init__(self):
-        self.SumMassFractBase = None
-
-    def Calc_func(self):
-        Fat_Size.Initialize_func()
-        LipidDeposits.Initialize_func()
-        Bone_Size.Initialize_func()
-        Bone_Mineral.Initialize_func()
-        Brain_Size.Initialize_func()
-        GITract_Size.Initialize_func()
-        Kidney_Size.Initialize_func()
-        LeftHeart_Size.Initialize_func()
-        LeftHeart_ContractileProtein.Initialize_func()
-        Liver_Size.Initialize_func()
-        OtherTissue_Size.Initialize_func()
-        RespiratoryMuscle_Size.Initialize_func()
-        RespiratoryMuscle_ContractileProtein.Initialize_func()
-        RightHeart_Size.Initialize_func()
-        RightHeart_ContractileProtein.Initialize_func()
-        SkeletalMuscle_Size.Initialize_func()
-        SkeletalMuscle_ContractileProtein.Initialize_func()
-        Skin_Size.Initialize_func()
-        self.SumMassFractBase = Bone_Size.MassFractBase + Brain_Size.MassFractBase + GITract_Size.MassFractBase + Kidney_Size.MassFractBase + LeftHeart_Size.MassFractBase + Liver_Size.MassFractBase + OtherTissue_Size.MassFractBase + RespiratoryMuscle_Size.MassFractBase + RightHeart_Size.MassFractBase + Skin_Size.MassFractBase
-
-class Start_Creatinine:
-
-    def Calc_func(self):
-        CreatininePool.Init_func()
-
-class Start_Creatine:
-
-    def Calc_func(self):
-        pass
-
-class Start_Metabolism:
-
-    def Calc_func(self):
-        Start_Glucose.Calc_func()
-        Start_FattyAcid.Calc_func()
-        Start_AminoAcid.Calc_func()
-        Start_KetoAcid.Calc_func()
-        Start_Triglyceride.Calc_func()
-        Start_Urea.Calc_func()
-        Start_Creatine.Calc_func()
-        Start_Creatinine.Calc_func()
-
-class Start_Urea:
-
-    def Calc_func(self):
-        UreaPool.Init_func()
-
-class Start_FattyAcid:
-
-    def Calc_func(self):
-        FAPool.Init_func()
-
-class Start_AminoAcid:
-
-    def Calc_func(self):
-        AAPool.Init_func()
-
-class Start_Triglyceride:
-
-    def Calc_func(self):
-        TriglyceridePool.Init_func()
-
-class Start_Glucose:
-
-    def Calc_func(self):
-        GlucosePool.Init_func()
-
-class Start_KetoAcid:
-
-    def Calc_func(self):
-        KAPool.Init_func()
-
-class Start_Testosterone:
-
-    def Calc_func(self):
-        Testosterone.Init_func()
-
-class Start_Progesterone:
-
-    def Calc_func(self):
-        Progesterone.Init_func()
-
-class Start_Norepinephrine:
-
-    def Calc_func(self):
-        NEPool.Init_func()
-
-class Start_Epinephrine:
-
-    def Calc_func(self):
-        EpiPool.Init_func()
-
-class Start_ANP:
-
-    def Calc_func(self):
-        ANPPool.Init_func()
-
-class Start_Aldosterone:
-
-    def Calc_func(self):
-        AldoPool.Init_func()
-
-class Start_Renin:
-
-    def Calc_func(self):
-        ReninPool.Init_func()
-
-class Start_FSH:
-
-    def Calc_func(self):
-        FSH_Circulating.Init_func()
-
-class Start_Leptin:
-
-    def Calc_func(self):
-        LeptinPool.Init_func()
-
-class Start_Insulin:
-
-    def Calc_func(self):
-        InsulinPool.Init_func()
-
-class Start_Inhibin:
-
-    def Calc_func(self):
-        Inhibin.Init_func()
-
-class Start_LH:
-
-    def Calc_func(self):
-        LH_Circulating.Init_func()
-
-class Start_ADH:
-
-    def Calc_func(self):
-        ADHPool.Init_func()
-
-class Start_Estradiol:
-
-    def Calc_func(self):
-        Estradiol.Init_func()
-
-class Start_hCG:
-
-    def Calc_func(self):
-        hCG.Init_func()
-
-class Start_Glucagon:
-
-    def Calc_func(self):
-        GlucagonPool.Init_func()
-
-class Start_EPO:
-
-    def Calc_func(self):
-        EPOPool.Init_func()
-
-class Start_Hormones:
-
-    def Calc_func(self):
-        Start_Epinephrine.Calc_func()
-        Start_Norepinephrine.Calc_func()
-        Start_ADH.Calc_func()
-        Start_Aldosterone.Calc_func()
-        Start_ANP.Calc_func()
-        Start_EPO.Calc_func()
-        Start_Estradiol.Calc_func()
-        Start_FSH.Calc_func()
-        Start_Glucagon.Calc_func()
-        Start_hCG.Calc_func()
-        Start_Inhibin.Calc_func()
-        Start_Insulin.Calc_func()
-        Start_Leptin.Calc_func()
-        Start_LH.Calc_func()
-        Start_Progesterone.Calc_func()
-        Start_Renin.Calc_func()
-        Start_Testosterone.Calc_func()
-        Start_ThyroidHormone.Calc_func()
-
-class Start_ThyroidHormone:
-
-    def Calc_func(self):
-        ThyroidPool.Init_func()
-
-class Start_ExtracellularPotassium:
-
-    def Calc_func(self):
-        KPool.Init_func()
-
-class Start_ExtracellularPhosphate:
-
-    def Calc_func(self):
-        PO4Pool.Init_func()
-
-class Start_ExtracellularSodium:
-
-    def Calc_func(self):
-        NaPool.Init_func()
-
-class Start_ExtracellularSulphate:
-
-    def Calc_func(self):
-        SO4Pool.Init_func()
-
-class Start_ExtracellularChloride:
-
-    def Calc_func(self):
-        ClPool.Init_func()
-
-class Start_CellularPotassium:
-
-    def Calc_func(self):
-        KCell.Init_func()
-
-class Start_Electrolytes:
-
-    def Calc_func(self):
-        Start_ExtracellularSodium.Calc_func()
-        Start_ExtracellularChloride.Calc_func()
-        Start_ExtracellularPhosphate.Calc_func()
-        Start_ExtracellularPotassium.Calc_func()
-        Start_CellularPotassium.Calc_func()
-        Start_ExtracellularSulphate.Calc_func()
-
 class Start_OrganConductance:
 
     def Calc_func(self):

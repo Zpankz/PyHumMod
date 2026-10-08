@@ -405,7 +405,10 @@ def process_expression(string):
     string = string.replace(" NOT ", " not ")
     string = string.replace(" TRUE ", " True ")
     string = string.replace(" FALSE ", " False ")
-    string = string.replace(" INFINITE ", "float(\"inf\")")
+    string = string.replace(" INFINITE ", " float(\"inf\") ")
+    string = string.replace(" INFINITY ", " float(\"inf\") ")
+    string = string.replace(" System.RANDOM ", " random.random() ")
+    string = string.replace(" ROUND ", " round ")
     string = string.replace(" UNDEFINED ", "0") #HumMod treats undefined as zero
     string = string.replace(" UNKNOWN ", "None")
     string = string.replace(" BLANK ", "None")
@@ -470,6 +473,9 @@ def add_self_where_necessary(code):
                 "min",
                 "x",
                 "Timer",
+                "float",
+                "round",
+                "random.random",
                 "print"]) and #special words
             not re.match("impliciteq", string) and
             not re.match("diffeq", string) and

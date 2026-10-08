@@ -28,7 +28,9 @@ SCHEMA = os.path.join(HERE, "schema.sql")
 
 RUNTIME_MODULE = "hummod"  # pseudo-module holding the module-level step() function
 RUNTIME_CLASSES = {"System", "Timer"}
-IGNORED_NAMES = {"math", "np", "timervars"}
+IGNORED_NAMES = {"math", "np", "random", "timervars"}
+# Block names HumMod uses for actions a protocol or the user triggers, not the step loop.
+EVENT_BLOCK = re.compile(r"Now|Reset|Stop|Start|Init|Request|^Turn|ForDisplay")
 
 
 def _qual(*parts):
@@ -208,7 +210,13 @@ class Extractor:
         """Variable qualnames read by an expression, and curve calls inside it."""
         found, curves = [], []
         called = {id(n.func) for n in ast.walk(expr) if isinstance(n, ast.Call)}
+        bases = {id(n.value) for n in ast.walk(expr) if isinstance(n, ast.Attribute)}
         for node in ast.walk(expr):
+            if (isinstance(node, ast.Name) and isinstance(node.ctx, ast.Load) and id(node) not in called
+                    and id(node) not in bases and node.id in self.classes and node.id not in ctx["locals"]):
+                # e.g. `if Timer < self.Interval`: the class is compared, not the module's timer
+                self.issues.append(("class_as_value", node.id, ctx["method"], node.lineno))
+                continue
             if (id(node) in called and isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name)
                     and not node.attr.endswith(("_func", "_curve")) and node.value.id not in IGNORED_NAMES):
                 # e.g. self.float(x): a method the converter emitted but never defined
@@ -540,10 +548,33 @@ class Extractor:
                 role="local", dtype=None, declared=0, initial_expr=None, initial_value=None,
                 writer_count=len(writers[qualname]), reader_count=len(readers[qualname]),
                 foreign_writes=0, integrator=None, scc_id=None, algebraic_scc_id=None, line=line))
+        for call in self.calls:
+            if call["callee"] not in self.functions:
+                self.issues.append(("missing_block", call["callee"],
+                                    "called from %s but never defined" % call["caller"], call["line"]))
         for fn in self.functions.values():
             if fn["kind"] == "block" and not fn["scheduled"]:
                 self.issues.append(("unscheduled_block", fn["qualname"],
-                                    "not reachable from step()", fn["line_start"]))
+                                    "not reachable from step() (%s)" % self._unscheduled_reason(fn),
+                                    fn["line_start"]))
+
+    def _unscheduled_reason(self, fn):
+        """Why a block step() never reaches is (probably) harmless, or 'unexplained'."""
+        node = ast.parse(fn["source"].strip()).body[0]
+        if all(isinstance(s, ast.Pass) for s in node.body):
+            return "empty"
+        if EVENT_BLOCK.search(fn["phase"] or ""):
+            return "event handler"
+        if any(c["callee"] == fn["qualname"] for c in self.calls):
+            return "called only from unscheduled blocks"
+        callees = [c["callee"] for c in self.calls if c["caller"] == fn["qualname"]]
+        if callees and all(self.functions[c]["scheduled"] for c in callees if c in self.functions):
+            return "aggregate whose callees step() already runs"
+        siblings = [f for f in self.functions.values()
+                    if f["module"] == fn["module"] and f["kind"] == "block" and f["scheduled"]]
+        if siblings:
+            return "unused alternative of a scheduled block in the same module"
+        return "module never wired into Structure"
 
     def _loops(self):
         """Feedback loops (all reads) and algebraic loops (same-step reads only)."""
