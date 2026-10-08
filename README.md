@@ -30,3 +30,11 @@ To do this afresh, change the source directory in HumMod_to_python_converter.py 
 
 Then, from the PyHumMod directory run:
 > python HumMod_to_python_converter.py
+
+
+# query the model's architecture
+`archdb/` extracts the whole model (modules, blocks, variables, equations, curves, call graph, execution order of one step, feedback loops) into a SQLite database that can be queried from Python or the command line. It only needs the standard library:
+> python -m archdb show ADHPool.conc_ADH
+> python -m archdb path BetaBlockade.Block_percent Heart_Ventricles.Rate
+
+See archdb/README.md for the schema and the query API.
