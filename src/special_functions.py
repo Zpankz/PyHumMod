@@ -98,8 +98,10 @@ def _bisect_fixed_point(g, y0, error_limit):
 def cubic_hermite_spline(x, xarray, yarray, slopes):
     '''
     the curves in HumMod are Cubic Hermite Splines (curves defined by a set of
-    x,y coords and a slope at each point), clamped to the end values outside
-    the defined range
+    x,y coords and a slope at each point). Outside the defined range HumMod
+    continues the curve as a straight line with the end point's slope: in the
+    HumMod 3.5.2 saved state (Normal.ICS), a curve through (1, 1, slope 0.5) and
+    (3, 2, slope 0) evaluates to 0.8055 at x = 0.611, i.e. 1 + 0.5 * (0.611 - 1).
 
     input:
         xarray and yarray and slopes are lists of the same length, they are the x and y coordinates and associated slopes
@@ -107,9 +109,9 @@ def cubic_hermite_spline(x, xarray, yarray, slopes):
     returns a float
     '''
     if x <= xarray[0]:
-        return float(yarray[0])
+        return float(yarray[0] + slopes[0] * (x - xarray[0]))
     if x >= xarray[-1]:
-        return float(yarray[-1])
+        return float(yarray[-1] + slopes[-1] * (x - xarray[-1]))
     i = bisect_right(xarray, x) - 1
     x0, x1 = xarray[i], xarray[i + 1]
     dx = x1 - x0

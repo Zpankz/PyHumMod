@@ -153,13 +153,14 @@ class ArchDB:
         return c
 
     def eval_curve(self, qualname, x):
-        """Evaluate a HumMod curve the way special_functions.cubic_hermite_spline does (clamped ends)."""
+        """Evaluate a HumMod curve: cubic Hermite spline, continued outside its points
+        as a straight line with the end slope (as HumMod does; see special_functions)."""
         c = self.curve(qualname)
         xs, ys, ms = c["x"], c["y"], c["slope"]
         if x <= xs[0]:
-            return ys[0]
+            return ys[0] + ms[0] * (x - xs[0])
         if x >= xs[-1]:
-            return ys[-1]
+            return ys[-1] + ms[-1] * (x - xs[-1])
         i = bisect.bisect_right(xs, x) - 1
         h = xs[i + 1] - xs[i]
         t = (x - xs[i]) / h

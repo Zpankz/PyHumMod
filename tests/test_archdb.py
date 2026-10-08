@@ -93,8 +93,12 @@ class ArchDBTest(unittest.TestCase):
     def test_curve_matches_hermite_spline(self):
         db = self.db
         self.assertEqual(db.eval_curve("ADHSecretion.NeuralEffect_curve", 1.0), 1.0)
-        self.assertEqual(db.eval_curve("ADHSecretion.NeuralEffect_curve", 0.0), 0.4)   # clamped
-        self.assertEqual(db.eval_curve("ADHSecretion.NeuralEffect_curve", 9.0), 20.0)  # clamped
+        # outside its points the curve continues along the end slope
+        c = db.curve("ADHSecretion.NeuralEffect_curve")
+        self.assertAlmostEqual(db.eval_curve("ADHSecretion.NeuralEffect_curve", 0.0),
+                               c["y"][0] + c["slope"][0] * (0.0 - c["x"][0]))
+        self.assertAlmostEqual(db.eval_curve("ADHSecretion.NeuralEffect_curve", 9.0),
+                               c["y"][-1] + c["slope"][-1] * (9.0 - c["x"][-1]))
         mid = db.eval_curve("ADHSecretion.NeuralEffect_curve", 1.1)
         self.assertTrue(1.0 < mid < 2.0)
 
