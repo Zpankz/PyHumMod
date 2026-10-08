@@ -29,7 +29,7 @@ SHA-256 is stored in `meta`), and two builds of the same source are identical.
 | `calls` | block-to-block call edge, with its condition |
 | `execution` | entry in the flattened program of one `step()`: every block entry and equation, in run order |
 | `loops` | strongly connected component of the dependency graph: `feedback` (all reads) or `algebraic` (same-step reads only) |
-| `issues` | conversion defect found while extracting |
+| `issues` | conversion defect found while extracting (`duplicate_class`, `undeclared_variable`, `missing_method`, `missing_block`, `class_as_value`), and `unscheduled_block` with the reason it is not run: event handler, empty, aggregate, unused alternative, called only from unscheduled blocks, or module never wired into Structure |
 | `dependencies` (view) | variable edge `src -> dst` |
 | `state_variables`, `parameters` (views) | integrated variables with their rate, and settable inputs |
 
@@ -101,6 +101,6 @@ Every command takes `--json`.
   used as shared scratchpads: many blocks write their inputs and read their
   outputs. Those writes are flagged with `variables.foreign_writes`, and they
   join otherwise separate subsystems into the largest loops.
-- `hummod.py` defines 53 classes twice. Python keeps the last definition, so
-  only that one is extracted; the shadowed ones are listed under
-  `issues.kind = 'duplicate_class'`.
+- If a class is defined twice, Python keeps the last definition, so only that
+  one is extracted; the shadowed ones are listed under
+  `issues.kind = 'duplicate_class'`. The current `hummod.py` has none.
