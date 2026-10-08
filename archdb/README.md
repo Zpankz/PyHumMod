@@ -24,11 +24,11 @@ SHA-256 is stored in `meta`), and two builds of the same source are identical.
 | `functions` | method: `block` (`*_func`), `curve` (`*_curve`), `init`, `implicit_residual` (the nested function handed to `impliciteq`) |
 | `variables` | `Module.attr`, or `Module.method.local` for function locals |
 | `equations` | assignment inside a function, in statement order, with its guarding `if` condition |
-| `equation_inputs` | variable read by an equation (`via` = `rhs`, `condition`, or `integrator_state`) |
+| `equation_inputs` | variable read by an equation (`via` = `rhs`, `condition` for an enclosing `if`, `call_condition` for a guard on a call that reaches it, `timestep`, or `integrator_state`) |
 | `curves`, `curve_uses` | spline points/slopes, and where each curve is evaluated and with what argument |
 | `calls` | block-to-block call edge, with its condition |
 | `execution` | entry in the flattened program of one `step()`: every block entry and equation, in run order |
-| `loops` | feedback loop (strongly connected component of the dependency graph) |
+| `loops` | strongly connected component of the dependency graph: `feedback` (all reads) or `algebraic` (same-step reads only) |
 | `issues` | conversion defect found while extracting |
 | `dependencies` (view) | variable edge `src -> dst` |
 | `state_variables`, `parameters` (views) | integrated variables with their rate, and settable inputs |
@@ -66,7 +66,7 @@ db.entailments("BetaBlockade.Block_percent")  # counts, affected states, affecte
 db.path("BetaBlockade.Block_percent", "Heart_Ventricles.Rate")
 db.callees("Structure.Dervs_func", transitive=True)
 db.schedule(phase="Dervs", equations=False)
-db.loop_of("ADHPool.Mass")
+db.loop_of("ADHPool.Mass")                 # kind="algebraic" for the same-step loop
 db.eval_curve("ADHSecretion.NeuralEffect_curve", 1.1)
 db.sql("SELECT * FROM state_variables")
 ```
@@ -85,7 +85,7 @@ python -m archdb entails BetaBlockade.Block_percent
 python -m archdb path BetaBlockade.Block_percent Heart_Ventricles.Rate
 python -m archdb calls Structure.Parms_func -t
 python -m archdb schedule --phase Dervs --calls-only
-python -m archdb loops
+python -m archdb loops                  # --kind algebraic for same-step loops only
 python -m archdb issues --kind undeclared_variable
 python -m archdb curve ADHSecretion.NeuralEffect_curve --x 1.1
 python -m archdb sql "SELECT kind, COUNT(*) FROM equations GROUP BY kind"
@@ -100,7 +100,7 @@ Every command takes `--json`.
 - A few helper modules (`HgbTissue`, `HgbProps`, `Blood_GasToBase`, ...) are
   used as shared scratchpads: many blocks write their inputs and read their
   outputs. Those writes are flagged with `variables.foreign_writes`, and they
-  join otherwise separate subsystems into the largest feedback loop.
+  join otherwise separate subsystems into the largest loops.
 - `hummod.py` defines 53 classes twice. Python keeps the last definition, so
   only that one is extracted; the shadowed ones are listed under
   `issues.kind = 'duplicate_class'`.

@@ -53,7 +53,8 @@ CREATE TABLE variables (
     reader_count   INTEGER NOT NULL DEFAULT 0,  -- distinct equations that read it
     foreign_writes INTEGER NOT NULL DEFAULT 0,  -- 1 if assigned from a module other than its own
     integrator     TEXT,                 -- diffeq | delay | backwardeuler | stablediffeq (state variables)
-    scc_id         INTEGER,              -- strongly connected component in the same-step dependency graph
+    scc_id         INTEGER,              -- feedback loop (SCC of all dependencies) it belongs to
+    algebraic_scc_id INTEGER,            -- algebraic loop (SCC of same-step, non-lagged dependencies)
     line           INTEGER
 );
 
@@ -63,7 +64,7 @@ CREATE TABLE equations (
     function      TEXT NOT NULL REFERENCES functions(qualname),
     seq           INTEGER NOT NULL,      -- statement order inside the function (shared with calls.seq)
     target        TEXT NOT NULL,         -- variable qualname
-    kind          TEXT NOT NULL,         -- algebraic | integrate | delay | implicit | curve | constant | timer | implicit_residual | implicit_iterate
+    kind          TEXT NOT NULL,         -- algebraic | integrate | delay | implicit | curve | constant | timer | timer_count | implicit_residual | implicit_iterate
     expression    TEXT NOT NULL,         -- right-hand side, verbatim
     resolved      TEXT NOT NULL,         -- right-hand side with self.X rewritten as Module.X
     derivative    TEXT,                  -- for integrate/delay: the rate expression (resolved)
@@ -76,7 +77,7 @@ CREATE TABLE equations (
 CREATE TABLE equation_inputs (
     equation_id INTEGER NOT NULL REFERENCES equations(id),
     variable    TEXT NOT NULL,
-    via         TEXT NOT NULL,           -- rhs | condition | integrator_state
+    via         TEXT NOT NULL,           -- rhs | condition (enclosing if) | call_condition (guard on a call that reaches it) | timestep | integrator_state
     lagged      INTEGER NOT NULL DEFAULT 0, -- 1 if, on first execution, the value read was last written in the previous step
     PRIMARY KEY (equation_id, variable, via)
 );
@@ -132,12 +133,16 @@ CREATE TABLE issues (
     line      INTEGER
 );
 
--- Strongly connected components (feedback loops) of the same-step dependency graph.
+-- Strongly connected components of the dependency graph.
+-- kind = feedback: all dependencies (loops closing through state and last-step values).
+-- kind = algebraic: same-step dependencies only (lagged reads removed).
 CREATE TABLE loops (
-    scc_id  INTEGER PRIMARY KEY,
+    kind    TEXT NOT NULL,
+    scc_id  INTEGER NOT NULL,
     size    INTEGER NOT NULL,
     modules INTEGER NOT NULL,
-    sample  TEXT
+    sample  TEXT,
+    PRIMARY KEY (kind, scc_id)
 );
 
 -- Variable-to-variable dependency edges: src is read to compute dst.

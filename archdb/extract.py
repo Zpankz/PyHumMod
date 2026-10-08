@@ -15,9 +15,10 @@ import json
 import os
 import re
 import sqlite3
+import tempfile
 from collections import defaultdict
 
-EXTRACTOR_VERSION = "1"
+EXTRACTOR_VERSION = "2"
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 REPO_ROOT = os.path.dirname(HERE)
@@ -32,6 +33,15 @@ IGNORED_NAMES = {"math", "np", "timervars"}
 
 def _qual(*parts):
     return ".".join(parts)
+
+
+def _join(conds):
+    """Conjunction of guard expressions, parenthesised so `or` inside one guard keeps its meaning."""
+    if not conds:
+        return None
+    if len(conds) == 1:
+        return conds[0]
+    return " and ".join("(%s)" % c for c in conds)
 
 
 def _literal(node):
@@ -92,6 +102,7 @@ class Extractor:
         self.issues = []
         self.integrator = {}       # state variable qualname -> integrator function name
         self.pending_residual = {} # nested implicit function qualname -> (node, ctx, conds, cond_reads)
+        self.timers = []           # Timer attributes registered in timervars, in registration order
 
     # ------------------------------------------------------------------ parse
 
@@ -112,6 +123,7 @@ class Extractor:
             line_start=step.lineno, line_end=step.end_lineno,
             doc="Module-level step() driver of src/hummod.py"))
         self._function(RUNTIME_MODULE, step, kind="runtime", phase="step")
+        self._propagate_call_guards()
         self._schedule()
         self._resolve_variables()
         self._loops()
@@ -144,6 +156,11 @@ class Extractor:
         qualname = _qual(module, "__init__")
         self._add_function(module, "__init__", qualname, "init", None, node)
         for stmt in node.body:
+            if (isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call)
+                    and ast.unparse(stmt.value.func) == "timervars.append"):
+                arg = stmt.value.args[0]
+                if isinstance(arg, ast.Attribute):
+                    self.timers.append(_qual(module, arg.attr))
             if isinstance(stmt, ast.Assign):
                 target = stmt.targets[0]
                 if isinstance(target, ast.Attribute) and isinstance(target.value, ast.Name) and target.value.id == "self":
@@ -239,12 +256,12 @@ class Extractor:
         return None
 
     def _add_equation(self, function, seq, target, kind, rhs, derivative, conds, cond_reads, line, ctx,
-                      rhs_reads=None, state_read=None):
+                      rhs_reads=None, state_read=None, timestep_reads=()):
         eq_id = len(self.equations) + 1
         self.equations.append(dict(
             id=eq_id, function=function, seq=seq, target=target, kind=kind,
             expression=ast.unparse(rhs) if isinstance(rhs, ast.AST) else rhs,
-            derivative=self._qualify(derivative, ctx), condition=" and ".join(conds) or None,
+            derivative=self._qualify(derivative, ctx), condition=_join(conds),
             first_exec=None, line=line))
         self.equations[-1]["resolved"] = self._qualify(self.equations[-1]["expression"], ctx)
         if rhs_reads is None:
@@ -257,6 +274,8 @@ class Extractor:
             self.inputs[(eq_id, var, "rhs")] = 0
         for var in cond_reads:
             self.inputs[(eq_id, var, "condition")] = 0
+        for var in timestep_reads:
+            self.inputs[(eq_id, var, "timestep")] = 0
         if state_read:
             self.inputs[(eq_id, state_read, "integrator_state")] = 1
         for curve, arg in curves:
@@ -264,10 +283,10 @@ class Extractor:
         self.items[function].append((seq, "eq", eq_id))
         return eq_id
 
-    def _add_call(self, caller, callee, seq, conds, line):
+    def _add_call(self, caller, callee, seq, conds, line, cond_reads=()):
         call_id = len(self.calls) + 1
         self.calls.append(dict(id=call_id, caller=caller, callee=callee, seq=seq,
-                               condition=" and ".join(conds) or None, line=line))
+                               condition=_join(conds), line=line, cond_reads=list(cond_reads)))
         self.items[caller].append((seq, "call", call_id))
 
     def _walk(self, body, ctx, function, conds, cond_reads=()):
@@ -286,7 +305,7 @@ class Extractor:
                 if stmt.orelse:
                     self._walk(stmt.orelse, ctx, function, conds + ["not (%s)" % test], reads)
             elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
-                self._call_stmt(stmt, ctx, function, conds)
+                self._call_stmt(stmt, ctx, function, conds, cond_reads)
             elif isinstance(stmt, ast.FunctionDef):
                 self._implicit_residual(stmt, ctx, conds, cond_reads)
             elif isinstance(stmt, ast.Return):
@@ -294,20 +313,25 @@ class Extractor:
                 target = self._local(ctx, function.split(".")[-1], stmt.lineno)
                 self._add_equation(function, seq, target, "implicit_residual", stmt.value, None,
                                    conds, cond_reads, stmt.lineno, ctx)
-            elif isinstance(stmt, (ast.Pass, ast.For)):
-                if isinstance(stmt, ast.For):  # only in step(): timers count every step
-                    self._add_call(function, "Timer.count", self._next_seq(ctx), conds, stmt.lineno)
+            elif isinstance(stmt, ast.For):
+                # Only in step(): `for timer in timervars: timer.count()` advances every registered timer.
+                for timer in self.timers:
+                    self._add_equation(function, self._next_seq(ctx), timer, "timer_count",
+                                       "%s.count()" % timer, None, conds, cond_reads, stmt.lineno, ctx,
+                                       rhs_reads=["System.Dx"], state_read=timer)
+            elif isinstance(stmt, ast.Pass):
+                pass
             else:
                 self.issues.append(("unsupported_statement", ast.unparse(stmt)[:120], function, stmt.lineno))
 
-    def _call_stmt(self, stmt, ctx, function, conds):
+    def _call_stmt(self, stmt, ctx, function, conds, cond_reads):
         func = stmt.value.func
         if isinstance(func, ast.Attribute) and isinstance(func.value, ast.Name):
             base = func.value.id
             owner = ctx["module"] if base == "self" else base
             if func.attr.endswith("_func"):
                 callee = _qual(owner, func.attr)
-                self._add_call(function, callee, self._next_seq(ctx), conds, stmt.lineno)
+                self._add_call(function, callee, self._next_seq(ctx), conds, stmt.lineno, cond_reads)
                 return
             if base in IGNORED_NAMES:
                 return
@@ -325,10 +349,13 @@ class Extractor:
         target = self._target(target_node, ctx)
         if target is None:
             return
-        kind, derivative, rhs_reads, state_read = "algebraic", None, None, None
+        kind, derivative, rhs_reads, state_read, timestep_reads = "algebraic", None, None, None, ()
         if isinstance(rhs, ast.Call) and isinstance(rhs.func, ast.Name):
             name = rhs.func.id
             args = rhs.args
+            timestep = {"diffeq": 1, "stablediffeq": 1, "backwardeuler": 2, "delay": 3}.get(name)
+            if timestep is not None and len(args) > timestep:
+                timestep_reads = self._reads(args[timestep], ctx)[0]
             if name in ("diffeq", "stablediffeq"):
                 kind, derivative = "integrate", ast.unparse(args[0])
                 rhs_reads = self._reads(args[0], ctx)[0]
@@ -358,7 +385,8 @@ class Extractor:
             kind = "constant"
         seq = self._next_seq(ctx)
         self._add_equation(function, seq, target, kind, rhs, derivative, conds, cond_reads,
-                           stmt.lineno, ctx, rhs_reads=rhs_reads, state_read=state_read)
+                           stmt.lineno, ctx, rhs_reads=rhs_reads, state_read=state_read,
+                           timestep_reads=timestep_reads)
 
     def _emit_residual(self, ctx, residual_name, target, function):
         key = _qual(ctx["method"], residual_name or "")
@@ -367,7 +395,7 @@ class Extractor:
             self.issues.append(("missing_residual", key, function, None))
             return
         node, saved_ctx, conds, cond_reads = pending
-        self._add_call(function, key, self._next_seq(ctx), conds, node.lineno)
+        self._add_call(function, key, self._next_seq(ctx), conds, node.lineno, cond_reads)
         sub_ctx = dict(saved_ctx, seq=[0])
         # The solver's trial value: residual parameter <- current estimate of the target.
         for arg in node.args.args:
@@ -376,6 +404,31 @@ class Extractor:
             self._add_equation(key, seq, local, "implicit_iterate", target, None, conds, cond_reads,
                                node.lineno, sub_ctx, rhs_reads=[target])
         self._walk(node.body, sub_ctx, key, conds, cond_reads)
+
+    def _propagate_call_guards(self):
+        """A guard on a call controls every equation the callee runs, directly or through further calls."""
+        callees = defaultdict(set)
+        for call in self.calls:
+            callees[call["caller"]].add(call["callee"])
+        reach = {}
+
+        def reachable(fn):
+            if fn not in reach:
+                reach[fn] = {fn}
+                for sub in callees.get(fn, ()):
+                    reach[fn] |= reachable(sub)
+            return reach[fn]
+
+        eqs_by_function = defaultdict(list)
+        for eq in self.equations:
+            eqs_by_function[eq["function"]].append(eq["id"])
+        for call in self.calls:
+            if not call["cond_reads"]:
+                continue
+            for fn in reachable(call["callee"]):
+                for eq_id in eqs_by_function.get(fn, ()):
+                    for var in call["cond_reads"]:
+                        self.inputs.setdefault((eq_id, var, "call_condition"), 0)
 
     # -------------------------------------------------------------- schedule
 
@@ -394,12 +447,12 @@ class Extractor:
                     ord_ = len(self.execution) + 1
                     self.execution.append(dict(
                         ord=ord_, phase=sub_phase, depth=depth, item="call", function=callee,
-                        equation_id=None, condition=" and ".join(conds) or None, parent_ord=parent))
+                        equation_id=None, condition=_join(conds), parent_ord=parent))
                     if callee in self.functions:
                         self.functions[callee]["scheduled"] = 1
                         if callee not in stack:
                             expand(callee, depth + 1, conds, ord_, sub_phase, stack | {callee})
-                    elif callee != "Timer.count":
+                    else:
                         self.issues.append(("missing_function", callee, call["caller"], call["line"]))
                 else:
                     eq = self.equations[item_id - 1]
@@ -407,7 +460,7 @@ class Extractor:
                     ord_ = len(self.execution) + 1
                     self.execution.append(dict(
                         ord=ord_, phase=phase, depth=depth, item="equation", function=function,
-                        equation_id=item_id, condition=" and ".join(conds) or None, parent_ord=parent))
+                        equation_id=item_id, condition=_join(conds), parent_ord=parent))
                     if eq["first_exec"] is None:
                         eq["first_exec"] = ord_
 
@@ -480,23 +533,29 @@ class Extractor:
                 initial_value=decl["initial_value"] if decl else None,
                 writer_count=len(writers[qualname]), reader_count=len(readers[qualname]),
                 foreign_writes=int(foreign[qualname]), integrator=integrator.get(qualname),
-                scc_id=None, line=decl["line"] if decl else None))
+                scc_id=None, algebraic_scc_id=None, line=decl["line"] if decl else None))
         for qualname, (module, line) in sorted(self.locals_seen.items()):
             self.variables.append(dict(
                 module=module, name=qualname.split(".", 2)[2], qualname=qualname, scope="local",
                 role="local", dtype=None, declared=0, initial_expr=None, initial_value=None,
                 writer_count=len(writers[qualname]), reader_count=len(readers[qualname]),
-                foreign_writes=0, integrator=None, scc_id=None, line=line))
+                foreign_writes=0, integrator=None, scc_id=None, algebraic_scc_id=None, line=line))
         for fn in self.functions.values():
             if fn["kind"] == "block" and not fn["scheduled"]:
                 self.issues.append(("unscheduled_block", fn["qualname"],
                                     "not reachable from step()", fn["line_start"]))
 
     def _loops(self):
-        """Tarjan SCC over the variable dependency graph (all reads, excluding self-integration)."""
+        """Feedback loops (all reads) and algebraic loops (same-step reads only)."""
+        self.loops = []
+        self._scc("feedback", "scc_id", include_lagged=True)
+        self._scc("algebraic", "algebraic_scc_id", include_lagged=False)
+
+    def _scc(self, kind, column, include_lagged):
+        """Tarjan SCC over the variable dependency graph, excluding self-integration."""
         graph = defaultdict(set)
-        for (eq_id, var, via) in self.inputs:
-            if via == "integrator_state":
+        for (eq_id, var, via), lagged in self.inputs.items():
+            if via == "integrator_state" or (lagged and not include_lagged):
                 continue
             target = self.equations[eq_id - 1]["target"]
             if var != target:
@@ -543,11 +602,10 @@ class Extractor:
                         comps.append(sorted(comp))
         comps.sort(key=lambda c: (-len(c), c[0]))
         by_name = {v["qualname"]: v for v in self.variables}
-        self.loops = []
         for scc_id, comp in enumerate(comps, start=1):
             for q in comp:
-                by_name[q]["scc_id"] = scc_id
-            self.loops.append(dict(scc_id=scc_id, size=len(comp),
+                by_name[q][column] = scc_id
+            self.loops.append(dict(kind=kind, scc_id=scc_id, size=len(comp),
                                    modules=len({q.split(".")[0] for q in comp}),
                                    sample=", ".join(comp[:12])))
 
@@ -555,9 +613,19 @@ class Extractor:
 
     def write(self, db_path):
         os.makedirs(os.path.dirname(os.path.abspath(db_path)), exist_ok=True)
-        tmp = db_path + ".tmp"
-        if os.path.exists(tmp):
-            os.remove(tmp)
+        # A private temp file per build, so concurrent on-demand builds never touch each other's files.
+        fd, tmp = tempfile.mkstemp(prefix=os.path.basename(db_path) + ".",
+                                   suffix=".tmp", dir=os.path.dirname(os.path.abspath(db_path)))
+        os.close(fd)
+        try:
+            meta = self._write_to(tmp)
+            os.replace(tmp, db_path)
+        finally:
+            if os.path.exists(tmp):
+                os.remove(tmp)
+        return meta
+
+    def _write_to(self, tmp):
         con = sqlite3.connect(tmp)
         with open(SCHEMA, encoding="utf-8") as f:
             con.executescript(f.read())
@@ -573,7 +641,8 @@ class Extractor:
                ["module", "name", "qualname", "kind", "phase", "scheduled", "line_start", "line_end", "source"])
         insert("variables", self.variables,
                ["module", "name", "qualname", "scope", "role", "dtype", "declared", "initial_expr",
-                "initial_value", "writer_count", "reader_count", "foreign_writes", "integrator", "scc_id", "line"])
+                "initial_value", "writer_count", "reader_count", "foreign_writes", "integrator", "scc_id",
+                "algebraic_scc_id", "line"])
         insert("equations", self.equations,
                ["id", "function", "seq", "target", "kind", "expression", "resolved", "derivative", "condition",
                 "first_exec", "line"])
@@ -588,7 +657,7 @@ class Extractor:
                ["ord", "phase", "depth", "item", "function", "equation_id", "condition", "parent_ord"])
         con.executemany("INSERT INTO issues (kind, subject, detail, line) VALUES (?,?,?,?)",
                         sorted(set(self.issues), key=lambda i: (i[0], i[1], str(i[2]), i[3] or 0)))
-        insert("loops", self.loops, ["scc_id", "size", "modules", "sample"])
+        insert("loops", self.loops, ["kind", "scc_id", "size", "modules", "sample"])
 
         rel = os.path.relpath(self.source_path, REPO_ROOT)
         meta = {
@@ -603,7 +672,6 @@ class Extractor:
         con.executemany("INSERT INTO meta VALUES (?,?)", sorted(meta.items()))
         con.commit()
         con.close()
-        os.replace(tmp, db_path)
         return meta
 
 

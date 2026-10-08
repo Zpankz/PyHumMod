@@ -78,11 +78,14 @@ class ArchDB:
         return None, self.search(name, limit=20)
 
     def search(self, pattern, limit=50):
-        like = "%" + pattern.replace("*", "%") + "%"
+        """Substring match on names; `*` is the only wildcard (`_` and `%` match literally)."""
+        escaped = pattern.replace("\\", "\\\\").replace("%", "\\%").replace("_", "\\_")
+        like = "%" + escaped.replace("*", "%") + "%"
         rows = self.sql(
-            "SELECT 'module' AS type, name AS qualname FROM modules WHERE name LIKE ? "
-            "UNION ALL SELECT 'function', qualname FROM functions WHERE qualname LIKE ? "
-            "UNION ALL SELECT 'variable', qualname FROM variables WHERE qualname LIKE ? AND scope='attribute' "
+            "SELECT 'module' AS type, name AS qualname FROM modules WHERE name LIKE ? ESCAPE '\\' "
+            "UNION ALL SELECT 'function', qualname FROM functions WHERE qualname LIKE ? ESCAPE '\\' "
+            "UNION ALL SELECT 'variable', qualname FROM variables "
+            "WHERE qualname LIKE ? ESCAPE '\\' AND scope='attribute' "
             "LIMIT ?", (like, like, like, limit))
         return rows
 
@@ -166,7 +169,10 @@ class ArchDB:
 
     # --------------------------------------------------------- dependencies
 
+    CONDITION_VIAS = ("condition", "call_condition")
+
     def _graph(self):
+        """Adjacency maps; each edge keeps every (via, lagged) kind it occurs with."""
         if self._fwd is None:
             fwd, rev = defaultdict(dict), defaultdict(dict)
             for src, dst, via, lagged in self.con.execute(
@@ -174,12 +180,15 @@ class ArchDB:
                     "JOIN equations e ON e.id = i.equation_id WHERE i.via <> 'integrator_state'"):
                 if src == dst:
                     continue
-                prev = fwd[src].get(dst)
-                edge = (via, lagged) if prev is None else (min(prev[0], via), min(prev[1], lagged))
-                fwd[src][dst] = edge
-                rev[dst][src] = edge
+                kinds = fwd[src].setdefault(dst, set())
+                kinds.add((via, lagged))
+                rev[dst][src] = kinds
             self._fwd, self._rev = fwd, rev
         return self._fwd, self._rev
+
+    def _edge_allowed(self, kinds, include_conditions, include_lagged):
+        return any((include_conditions or via not in self.CONDITION_VIAS) and (include_lagged or not lagged)
+                   for via, lagged in kinds)
 
     def _bfs(self, graph, start, max_depth, include_conditions, include_lagged):
         seen = {start: 0}
@@ -189,12 +198,8 @@ class ArchDB:
             depth = seen[node]
             if max_depth is not None and depth >= max_depth:
                 continue
-            for nxt, (via, lagged) in graph.get(node, {}).items():
-                if nxt in seen:
-                    continue
-                if via == "condition" and not include_conditions:
-                    continue
-                if lagged and not include_lagged:
+            for nxt, kinds in graph.get(node, {}).items():
+                if nxt in seen or not self._edge_allowed(kinds, include_conditions, include_lagged):
                     continue
                 seen[nxt] = depth + 1
                 queue.append(nxt)
@@ -250,8 +255,8 @@ class ArchDB:
                     chain.append(node)
                     node = prev[node]
                 return chain[::-1]
-            for nxt, (via, _lagged) in fwd.get(node, {}).items():
-                if nxt not in prev and (include_conditions or via != "condition"):
+            for nxt, kinds in fwd.get(node, {}).items():
+                if nxt not in prev and self._edge_allowed(kinds, include_conditions, True):
                     prev[nxt] = node
                     queue.append(nxt)
         return None
@@ -296,15 +301,17 @@ class ArchDB:
             q += " LIMIT %d" % int(limit)
         return self.sql(q, params)
 
-    def loops(self, limit=20):
-        return self.sql("SELECT * FROM loops ORDER BY scc_id LIMIT ?", (limit,))
+    def loops(self, kind="feedback", limit=20):
+        """Loops of the given kind: 'feedback' (all dependencies) or 'algebraic' (same-step only)."""
+        return self.sql("SELECT * FROM loops WHERE kind = ? ORDER BY scc_id LIMIT ?", (kind, limit))
 
-    def loop_of(self, qualname):
-        row = self.con.execute("SELECT scc_id FROM variables WHERE qualname = ?", (qualname,)).fetchone()
+    def loop_of(self, qualname, kind="feedback"):
+        column = {"feedback": "scc_id", "algebraic": "algebraic_scc_id"}[kind]
+        row = self.con.execute("SELECT %s FROM variables WHERE qualname = ?" % column, (qualname,)).fetchone()
         if not row or row[0] is None:
             return None
-        return dict(scc_id=row[0], members=[r[0] for r in self.con.execute(
-            "SELECT qualname FROM variables WHERE scc_id = ? ORDER BY qualname", (row[0],))])
+        return dict(kind=kind, scc_id=row[0], members=[r[0] for r in self.con.execute(
+            "SELECT qualname FROM variables WHERE %s = ? ORDER BY qualname" % column, (row[0],))])
 
     def issues(self, kind=None, limit=200):
         if kind:

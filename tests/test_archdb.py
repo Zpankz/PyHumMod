@@ -48,7 +48,7 @@ class ArchDBTest(unittest.TestCase):
         step = next(n for n in tree.body if isinstance(n, ast.FunctionDef) and n.name == "step")
         expected += sum(isinstance(s, (ast.Assign, ast.AugAssign)) for s in ast.walk(step))
         got = self.db.sql("SELECT COUNT(*) AS n FROM equations "
-                          "WHERE kind NOT IN ('implicit_iterate', 'implicit_residual')")[0]["n"]
+                          "WHERE kind NOT IN ('implicit_iterate', 'implicit_residual', 'timer_count')")[0]["n"]
         # implicit_residual rows come from `return` statements, not assignments
         self.assertEqual(expected, got)
 
@@ -103,6 +103,56 @@ class ArchDBTest(unittest.TestCase):
         self.assertIn("duplicate_class", kinds)
         undeclared = {r["subject"] for r in self.db.issues("undeclared_variable")}
         self.assertIn("ADHPool.InitialConc", undeclared)
+
+    def test_timestep_is_an_input_of_integration(self):
+        down = {r["variable"] for r in self.db.outputs("System.Dx")}
+        self.assertIn("ADHPool.Mass", down)
+
+    def test_call_guard_controls_callee_outputs(self):
+        # ExcessLungWater.Failed_func runs only when OtherTissue_Function.Failed is true.
+        up = {r["variable"] for r in self.db.inputs("ExcessLungWater.Grad")}
+        self.assertIn("OtherTissue_Function.Failed", up)
+
+    def test_mixed_edge_survives_condition_filter(self):
+        # Index = FLAT inside a branch guarded by FLAT: the rhs edge must survive.
+        up = {r["variable"] for r in self.db.upstream("Heart_ECG.Index", 1, include_conditions=False)}
+        self.assertIn("Heart_ECG.FLAT", up)
+
+    def test_algebraic_loops_exclude_lagged_reads(self):
+        feedback = self.db.loops("feedback", 1)[0]["size"]
+        algebraic = self.db.loops("algebraic", 1)[0]["size"]
+        self.assertLess(algebraic, feedback)
+
+    def test_nested_guards_are_parenthesised(self):
+        rows = self.db.sql("SELECT condition FROM equations WHERE condition LIKE '%or%and%' "
+                           "AND function = 'Heart_Ventricles.Calc_func'")
+        self.assertTrue(rows)
+        for r in rows:
+            self.assertTrue(r["condition"].startswith("("), r["condition"])
+
+    def test_every_registered_timer_counts(self):
+        timers = {r["target"] for r in self.db.sql("SELECT target FROM equations WHERE kind = 'timer_count'")}
+        self.assertIn("DailyPlannerControl.WaitingTimer", timers)
+        self.assertIn("Heart_VFib.ElapsedTime", timers)
+        self.assertEqual(len(timers), 14)
+
+    def test_search_treats_underscore_literally(self):
+        hits = {r["qualname"] for r in self.db.search("CorpusLuteum_Growth")}
+        self.assertNotIn("Ovaries_CorpusLuteum.Growth", hits)
+        self.assertIn("CorpusLuteum_Growth", hits)
+
+    def test_concurrent_builds_do_not_collide(self):
+        from concurrent.futures import ProcessPoolExecutor
+        out = os.path.join(self.tmp.name, "shared.db")
+        with ProcessPoolExecutor(4) as pool:
+            list(pool.map(extract.build, [extract.DEFAULT_SOURCE] * 4, [out] * 4))
+        con = sqlite3.connect(out)
+        try:
+            self.assertGreater(con.execute("SELECT COUNT(*) FROM equations").fetchone()[0], 0)
+        finally:
+            con.close()
+        leftovers = [f for f in os.listdir(self.tmp.name) if f.endswith(".tmp")]
+        self.assertEqual(leftovers, [])
 
     def test_build_is_deterministic(self):
         other = os.path.join(self.tmp.name, "again.db")

@@ -101,10 +101,12 @@ def main(argv=None):
     s.add_argument("--function")
     s.add_argument("--calls-only", action="store_true")
     s.add_argument("--limit", type=int, default=200)
-    s = cmd("loops", help="feedback loops (strongly connected components)")
+    s = cmd("loops", help="feedback or algebraic loops (strongly connected components)")
+    s.add_argument("--kind", choices=["feedback", "algebraic"], default="feedback")
     s.add_argument("--limit", type=int, default=20)
-    s = cmd("loop", help="the feedback loop a variable belongs to")
+    s = cmd("loop", help="the loop a variable belongs to")
     s.add_argument("variable")
+    s.add_argument("--kind", choices=["feedback", "algebraic"], default="feedback")
     s = cmd("issues", help="conversion defects found during extraction")
     s.add_argument("--kind")
     s = cmd("curve", help="show a curve, or evaluate it at --x")
@@ -147,9 +149,9 @@ def main(argv=None):
     elif args.cmd == "schedule":
         _emit(args, db.schedule(args.phase, args.function, equations=not args.calls_only, limit=args.limit))
     elif args.cmd == "loops":
-        _emit(args, db.loops(args.limit))
+        _emit(args, db.loops(args.kind, args.limit))
     elif args.cmd == "loop":
-        _emit(args, db.loop_of(args.variable) or "(not in a feedback loop)")
+        _emit(args, db.loop_of(args.variable, args.kind) or "(not in a %s loop)" % args.kind)
     elif args.cmd == "issues":
         _emit(args, db.issues(args.kind))
     elif args.cmd == "curve":
